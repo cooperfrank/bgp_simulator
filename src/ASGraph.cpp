@@ -8,9 +8,11 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 #include <unordered_map>
 #include <functional>
 #include "../include/BGP.h"
+#include "../include/ROV.h"
 #include <stdexcept>
 
 
@@ -20,6 +22,66 @@ void ASGraph::addNode(const uint32_t asn) {
         // Ensure each ASNode has a default BGP policy instance
         node->policy = std::make_unique<BGP>();
         _node_map[asn] = node;
+    }
+}
+
+void ASGraph::setROV(uint32_t asn) {
+    addNode(asn);
+    _node_map[asn]->policy = std::make_unique<ROV>();
+}
+
+void ASGraph::loadROVFromFile(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Warning: Could not open ROV file " << filename << std::endl;
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        // parse ASN
+        try {
+            uint32_t asn = static_cast<uint32_t>(std::stoul(line));
+            setROV(asn);
+        } catch (...) {
+            // ignore malformed lines
+        }
+    }
+}
+
+void ASGraph::loadAnnouncementsFromFile(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open announcements file " << filename << std::endl;
+        return;
+    }
+
+    std::string line;
+    // Read header (if present)
+    if (!std::getline(file, line)) return;
+
+    // If header doesn't contain expected columns, we'll still attempt to parse rows
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        std::stringstream ss(line);
+        std::string seed_asn_s, prefix, rov_s;
+
+        // Expect exactly three comma-separated fields: seed_asn,prefix,rov_invalid
+        if (!std::getline(ss, seed_asn_s, ',')) continue;
+        if (!std::getline(ss, prefix, ',')) continue;
+        if (!std::getline(ss, rov_s, ',')) continue;
+
+        try {
+            uint32_t seed_asn = static_cast<uint32_t>(std::stoul(seed_asn_s));
+            bool rov = (rov_s == "True");
+            Announcement ann(prefix, seed_asn);
+            ann.rov_invalid = rov;
+            seedAnnouncement(seed_asn, ann);
+        } catch (...) {
+            // ignore malformed lines
+            continue;
+        }
     }
 }
 
@@ -201,7 +263,7 @@ void ASGraph::propagateAnnouncements() {
                 const Announcement &stored = kv.second;
                 for (uint32_t prov : node->_providers) {
                     // sent announcement: next_hop is the sender (asn), relationship is Customer
-                    Announcement sent(prefix, asn, Relationship::Customer, stored.as_path);
+                    Announcement sent(prefix, asn, Relationship::Customer, stored.as_path, stored.rov_invalid);
                     _node_map[prov]->policy->receiveAnnouncement(sent);
                 }
             }
@@ -227,7 +289,7 @@ void ASGraph::propagateAnnouncements() {
             const std::string &prefix = kv.first;
             const Announcement &stored = kv.second;
             for (uint32_t peer : node->_peers) {
-                Announcement sent(prefix, asn, Relationship::Peer, stored.as_path);
+                Announcement sent(prefix, asn, Relationship::Peer, stored.as_path, stored.rov_invalid);
                 _node_map[peer]->policy->receiveAnnouncement(sent);
             }
         }
@@ -250,7 +312,7 @@ void ASGraph::propagateAnnouncements() {
                 const std::string &prefix = kv.first;
                 const Announcement &stored = kv.second;
                 for (uint32_t cust : node->_customers) {
-                    Announcement sent(prefix, asn, Relationship::Provider, stored.as_path);
+                    Announcement sent(prefix, asn, Relationship::Provider, stored.as_path, stored.rov_invalid);
                     _node_map[cust]->policy->receiveAnnouncement(sent);
                 }
             }
@@ -265,4 +327,45 @@ void ASGraph::propagateAnnouncements() {
             }
         }
     }
+}
+
+void ASGraph::dumpRIBsToCSV(const std::string& filename) const {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        std::cerr << "Error: Could not open output file " << filename << std::endl;
+        return;
+    }
+
+    out << "asn,prefix,as_path\n";
+
+    std::vector<uint32_t> asns;
+    asns.reserve(_node_map.size());
+    for (const auto &p : _node_map) asns.push_back(p.first);
+    std::sort(asns.begin(), asns.end());
+
+    for (uint32_t asn : asns) {
+        auto it = _node_map.find(asn);
+        if (it == _node_map.end()) continue;
+        auto node = it->second;
+        if (!node->policy) continue;
+        const auto &rib = node->policy->getLocalRIB();
+        for (const auto &kv : rib) {
+            const std::string &prefix = kv.first;
+            const Announcement &ann = kv.second;
+
+            // Format AS-path as (a, b, c) with a trailing comma for single-element paths: (a,)
+            std::ostringstream path_ss;
+            path_ss << '(';
+            for (size_t i = 0; i < ann.as_path.size(); ++i) {
+                if (i) path_ss << ", ";
+                path_ss << ann.as_path[i];
+            }
+            if (ann.as_path.size() == 1) path_ss << ','; // ensure single-element has trailing comma
+            path_ss << ')';
+
+            out << asn << ',' << prefix << ',' << '"' << path_ss.str() << '"' << '\n';
+        }
+    }
+
+    out.close();
 }

@@ -4,9 +4,7 @@
 #include <vector>
 #include <memory>
 
-// Forward-declare Policy to avoid including Policy.h in this header
-class Policy;
-
+#include "Policy.h"
 
 class ASNode {
 public:

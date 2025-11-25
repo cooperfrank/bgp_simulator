@@ -83,7 +83,7 @@ void BGP::processAnnouncementsFor(uint32_t my_asn) {
         new_path.push_back(my_asn);
         new_path.insert(new_path.end(), chosen.as_path.begin(), chosen.as_path.end());
 
-        Announcement stored(prefix, chosen.next_hop_asn, chosen.received_from, new_path);
+        Announcement stored(prefix, chosen.next_hop_asn, chosen.received_from, new_path, chosen.rov_invalid);
 
         // Compare with existing local RIB entry (if any) and only replace if better
         auto it2 = local_rib.find(prefix);

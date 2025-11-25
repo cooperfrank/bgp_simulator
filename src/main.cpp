@@ -1,5 +1,11 @@
 #include <iostream>
 #include <string>
+#include "../include/ASGraph.h"
+
+// ./bgp_simulator 
+// --relationships ../bench/many/CAIDAASGraphCollector_2025.10.16.txt 
+// --announcements ../bench/many/anns.csv 
+// --rov-asns ../bench/many/rov_asns.csv
 
 int main(int argc, char* argv[]) {
     if (argc != 7) {
@@ -32,8 +38,23 @@ int main(int argc, char* argv[]) {
     std::cout << "Announcements: " << announcements_path << "\n";
     std::cout << "ROV ASNs: " << rov_asns_path << "\n";
 
+    // Build graph from relationships
+    ASGraph g;
+    g.buildGraphFromFile(relationships_path);
 
-    // Should output a ribs.csv file
+    // Load ROV-deploying ASNs
+    g.loadROVFromFile(rov_asns_path);
+
+    // Load announcements and seed into graph
+    g.loadAnnouncementsFromFile(announcements_path);
+
+    // Run propagation
+    g.propagateAnnouncements();
+
+    // Dump resulting RIBs to ribs.csv
+    const std::string out = "ribs.csv";
+    g.dumpRIBsToCSV(out);
+    std::cout << "Wrote " << out << "\n";
 
     return 0;
 }

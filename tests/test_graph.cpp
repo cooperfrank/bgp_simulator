@@ -7,6 +7,8 @@
 #include <cstdlib>
 
 #include "../include/ASGraph.h"
+#include "../include/Announcement.h"
+#include "../include/Policy.h"
 
 int main() {
     int errors = 0;
@@ -61,6 +63,57 @@ int main() {
 
     // Ensure sample file graph has no provider cycles
     check(!g2.hasProviderCycle(), "Sample-edge graph should not contain provider cycles");
+
+    // Test seeding an announcement into an AS local RIB
+    Announcement ann("1.2.0.0/16", 1u);
+    g.seedAnnouncement(1u, ann);
+    auto &rib = g.get(1u)->policy->getLocalRIB();
+    check(rib.find("1.2.0.0/16") != rib.end(), "Seeded announcement should appear in AS 1 local RIB");
+
+    // Propagation test: small provider chain 1->2->3 and peer 2<->4
+    ASGraph gprop;
+    gprop.addProvider(1u, 2u); // 1 is provider of 2
+    gprop.addProvider(2u, 3u); // 2 is provider of 3
+    gprop.addPeer(2u, 4u);     // 2 peers with 4
+
+    // Seed origin at AS 3
+    Announcement pann("5.5.0.0/16", 3u);
+    gprop.seedAnnouncement(3u, pann);
+
+    // Confirm AS3 has the origin stored
+    auto &r3 = gprop.get(3u)->policy->getLocalRIB();
+    check(r3.find("5.5.0.0/16") != r3.end(), "AS3 should have the seeded announcement");
+    if (r3.find("5.5.0.0/16") != r3.end()) {
+        check(r3.at("5.5.0.0/16").as_path.size() == 1 && r3.at("5.5.0.0/16").as_path[0] == 3u,
+              "AS3 stored path should be [3]");
+    }
+
+    // Run propagation (up, across, down)
+    gprop.propagateAnnouncements();
+
+    // After propagation, AS2 should have path [2,3], AS1 should have [1,2,3]
+    auto &r2 = gprop.get(2u)->policy->getLocalRIB();
+    auto &r1 = gprop.get(1u)->policy->getLocalRIB();
+    auto &r4 = gprop.get(4u)->policy->getLocalRIB();
+
+    check(r2.find("5.5.0.0/16") != r2.end(), "AS2 should have received/stored the announcement");
+    if (r2.find("5.5.0.0/16") != r2.end()) {
+        check(r2.at("5.5.0.0/16").as_path.size() >= 2 && r2.at("5.5.0.0/16").as_path[0] == 2u,
+              "AS2 stored path should start with 2");
+    }
+
+    check(r1.find("5.5.0.0/16") != r1.end(), "AS1 should have received/stored the announcement");
+    if (r1.find("5.5.0.0/16") != r1.end()) {
+        check(r1.at("5.5.0.0/16").as_path.size() >= 3 && r1.at("5.5.0.0/16").as_path[0] == 1u,
+              "AS1 stored path should start with 1");
+    }
+
+    // AS4 is a peer of AS2 and should have received the announcement across with path starting with 4
+    check(r4.find("5.5.0.0/16") != r4.end(), "AS4 (peer of AS2) should have received the announcement via peer step");
+    if (r4.find("5.5.0.0/16") != r4.end()) {
+        check(r4.at("5.5.0.0/16").as_path.size() >= 2 && r4.at("5.5.0.0/16").as_path[0] == 4u,
+              "AS4 stored path should start with 4");
+    }
 
     // Create an explicit no-cycle chain and check false
     ASGraph g_no_cycle;

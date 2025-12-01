@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <functional>
+#include <cctype>
 #include "../include/BGP.h"
 #include "../include/ROV.h"
 #include <stdexcept>
@@ -41,7 +42,14 @@ void ASGraph::loadROVFromFile(const std::string& filename) {
         if (line.empty()) continue;
         // parse ASN
         try {
-            uint32_t asn = static_cast<uint32_t>(std::stoul(line));
+            // Trim whitespace and possible CR characters
+            size_t start = 0;
+            while (start < line.size() && std::isspace((unsigned char)line[start])) ++start;
+            size_t end = line.size();
+            while (end > start && std::isspace((unsigned char)line[end-1])) --end;
+            std::string trimmed = line.substr(start, end - start);
+
+            uint32_t asn = static_cast<uint32_t>(std::stoul(trimmed));
             setROV(asn);
         } catch (...) {
             // ignore malformed lines
@@ -71,6 +79,19 @@ void ASGraph::loadAnnouncementsFromFile(const std::string& filename) {
         if (!std::getline(ss, seed_asn_s, ',')) continue;
         if (!std::getline(ss, prefix, ',')) continue;
         if (!std::getline(ss, rov_s, ',')) continue;
+
+        // Trim whitespace and CR/LF from parsed fields
+        auto trim = [](std::string &s) {
+            size_t a = 0;
+            while (a < s.size() && std::isspace((unsigned char)s[a])) ++a;
+            size_t b = s.size();
+            while (b > a && std::isspace((unsigned char)s[b-1])) --b;
+            s = s.substr(a, b - a);
+        };
+
+        trim(seed_asn_s);
+        trim(prefix);
+        trim(rov_s);
 
         try {
             uint32_t seed_asn = static_cast<uint32_t>(std::stoul(seed_asn_s));
@@ -171,15 +192,28 @@ void ASGraph::buildGraphFromFile(const std::string& filename) {
 
         // 1. Get node1 ASN
         std::getline(ss, segment, '|');
-        node1_asn = std::stoul(segment);
+        // trim
+        size_t s1 = 0;
+        while (s1 < segment.size() && std::isspace((unsigned char)segment[s1])) ++s1;
+        size_t e1 = segment.size();
+        while (e1 > s1 && std::isspace((unsigned char)segment[e1-1])) --e1;
+        node1_asn = std::stoul(segment.substr(s1, e1 - s1));
 
         // 2. Get node2 ASN
         std::getline(ss, segment, '|');
-        node2_asn = std::stoul(segment);
+        size_t s2 = 0;
+        while (s2 < segment.size() && std::isspace((unsigned char)segment[s2])) ++s2;
+        size_t e2 = segment.size();
+        while (e2 > s2 && std::isspace((unsigned char)segment[e2-1])) --e2;
+        node2_asn = std::stoul(segment.substr(s2, e2 - s2));
 
         // 3. Get relationship type
         std::getline(ss, segment, '|');
-        relationship = std::stoi(segment);
+        size_t s3 = 0;
+        while (s3 < segment.size() && std::isspace((unsigned char)segment[s3])) ++s3;
+        size_t e3 = segment.size();
+        while (e3 > s3 && std::isspace((unsigned char)segment[e3-1])) --e3;
+        relationship = std::stoi(segment.substr(s3, e3 - s3));
 
         // Process the relationship
         if (relationship == -1) {
